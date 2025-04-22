@@ -1,6 +1,8 @@
 import asyncio
 import datetime
+import operator
 import time
+from typing import Dict, List, Union
 from fastmcp import FastMCP
 import pandas as pd
 import akshare as ak
@@ -714,6 +716,7 @@ async def fund_money_rank_em() -> pd.DataFrame:
     """
     return ak.fund_money_rank_em()
 
+
 @mcp.tool()
 async def fund_lcx_rank_em() -> pd.DataFrame:
     """
@@ -722,6 +725,7 @@ async def fund_lcx_rank_em() -> pd.DataFrame:
 
     """
     return ak.fund_lcx_rank_em()
+
 
 @mcp.tool()
 async def fund_hk_rank_em() -> pd.DataFrame:
@@ -732,6 +736,7 @@ async def fund_hk_rank_em() -> pd.DataFrame:
     """
     return ak.fund_hk_rank_em()
 
+
 @mcp.tool()
 async def fund_rating_all() -> pd.DataFrame:
     """
@@ -740,6 +745,7 @@ async def fund_rating_all() -> pd.DataFrame:
 
     """
     return ak.fund_rating_all()
+
 
 @mcp.tool()
 async def fund_rating_sh(date: str = "20230630") -> pd.DataFrame:
@@ -765,6 +771,7 @@ async def fund_rating_zs(date: str = "20230331") -> pd.DataFrame:
 
     """
     return ak.fund_rating_zs(date)
+
 
 @mcp.tool()
 async def fund_rating_ja(date: str = "20230331") -> pd.DataFrame:
@@ -803,6 +810,99 @@ async def news_cctv(date: str = "20240424") -> pd.DataFrame:
 
     """
     return ak.news_cctv(date)
+
+@mcp.tool()
+async def apply_filters_for_data_frame(
+        df: Union[dict, list],  # 接受字典或列表作为输入
+        filters: List[Dict[str, Union[str, int, float, List, bool]]],
+        operator_type: str = "and",
+) -> dict:  # 返回字典而不是DataFrame
+    """
+    通用Pandas筛选函数
+    筛选条件字典格式:
+            {
+                "column": "列名",
+                "operator": "操作符",  # 可选值: eq, ne, gt, lt, ge, le, in, not_in, contains, not_contains
+                "value": 比较值,
+                "data_type": "数据类型"  # 可选: 'str', 'int', 'float', 'date'（可选，会自动推断）
+            }
+        使用示例1：简单的AND条件
+            filters = [
+                {"column": "Department", "operator": "eq", "value": "HR"},
+                {"column": "Age", "operator": "gt", "value": 30}
+            ]
+            filtered_df = apply_filters_for_data_frame(df, filters)
+        使用示例2：OR条件
+            filters = [
+                {"column": "Name", "operator": "contains", "value": "a"},
+                {"column": "Salary", "operator": "ge", "value": 70000}
+            ]
+            filtered_df = apply_filters_for_data_frame(df, filters, operator_type="or")
+         使用示例3：IN操作
+            filters = [
+                {"column": "Name", "operator": "in", "value": ["Alice", "Bob", "Charlie"]},
+                {"column": "Join_Date", "operator": "gt", "value": "2020-01-01", "data_type": "date"}
+            ]
+            filtered_df = apply_filters_for_data_frame(df, filters)
+    Args:
+        df: 要筛选的DataFrame
+        filters: 筛选条件列表，每个条件是一个字典
+        operator_type: 多个条件之间的逻辑关系，"and"或"or"
+    Returns: 筛选之后的DataFrame
+    """
+    # 将输入转换为DataFrame
+    df = pd.DataFrame(df)
+    
+    if not filters:
+        return df.to_dict(orient='records')
+
+    # 定义操作符映射
+    operator_map = {
+        "eq": operator.eq,
+        "ne": operator.ne,
+        "gt": operator.gt,
+        "lt": operator.lt,
+        "ge": operator.ge,
+        "le": operator.le,
+        "in": lambda x, y: x.isin(y),
+        "not_in": lambda x, y: ~x.isin(y),
+        "contains": lambda x, y: x.str.contains(y),
+        "not_contains": lambda x, y: ~x.str.contains(y),
+    }
+    mask_list = []
+    for filter_ in filters:
+        col = filter_["column"]
+        op = filter_.get("operator", "eq")
+        value = filter_["value"]
+        data_type = filter_.get("data_type")
+        # 自动推断数据类型
+        if data_type is None:
+            if isinstance(value, (list, tuple)):
+                data_type = type(value[0]).__name__ if value else "str"
+            else:
+                data_type = type(value).__name__
+        # 处理日期类型（需要转换为datetime）
+        if data_type == "date" and not pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = pd.to_datetime(df[col])
+            if not isinstance(value, (list, tuple)):
+                value = pd.to_datetime(value)
+        # 获取操作符函数
+        op_func = operator_map.get(op)
+        if op_func is None:
+            raise ValueError(f"不支持的运算符: {op}")
+        # 应用筛选条件
+        mask = op_func(df[col], value)
+        mask_list.append(mask)
+    # 组合多个条件
+    if operator_type == "and":
+        final_mask = pd.concat(mask_list, axis=1).all(axis=1)
+    elif operator_type == "or":
+        final_mask = pd.concat(mask_list, axis=1).any(axis=1)
+    else:
+        raise ValueError("operator_type 必须是 'and' 或 'or'")
+    result_df = df[final_mask].copy()
+    return result_df.to_dict(orient='records')
+
 
 # 分位数计算, 1260对应5年的交易日
 def __calculate_percentile(df, item_col_name, window=1260):
